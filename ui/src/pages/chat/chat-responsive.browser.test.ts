@@ -4874,8 +4874,8 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
       expect(
         await page
           .locator(".session-progress-card__body")
-          .evaluate((node) => getComputedStyle(node).overflow),
-      ).toBe("hidden");
+          .evaluate((node) => getComputedStyle(node).overflowY),
+      ).toBe("auto");
 
       await list.evaluate((node) => {
         node.scrollTop = node.scrollHeight;

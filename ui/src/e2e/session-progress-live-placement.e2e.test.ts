@@ -209,6 +209,112 @@ suite.define(() => {
     );
   });
 
+  it("keeps tall markdown-only and mixed progress cards scroll-reachable", async () => {
+    const markdown = [
+      "| Gate | State |",
+      "| --- | --- |",
+      ...Array.from(
+        { length: 24 },
+        (_, index) => `| Gate ${index + 1} | Detailed state for gate ${index + 1} |`,
+      ),
+    ].join("\n");
+    const variants = [
+      { name: "markdown-only", steps: undefined },
+      {
+        name: "markdown-and-plan",
+        steps: Array.from({ length: 8 }, (_, index) => ({
+          status: index < 3 ? ("completed" as const) : ("pending" as const),
+          step: `Plan step ${index + 1}`,
+        })),
+      },
+    ];
+
+    for (const variant of variants) {
+      const sessionKey = `agent:main:progress-${variant.name}`;
+      await suite.withPage(
+        {
+          colorScheme: "dark",
+          locale: "en-US",
+          serviceWorkers: "block",
+          viewport: { height: 700, width: 980 },
+        },
+        async ({ page }) => {
+          const gateway = await installMockGateway(page, {
+            featureMethods: ["chat.metadata", "chat.startup", "progressCard.get"],
+            methodResponses: {
+              "progressCard.get": {
+                card: {
+                  markdown,
+                  revision: 1,
+                  sessionKey,
+                  steps: variant.steps,
+                  updatedAt: 1,
+                },
+              },
+              "sessions.list": chatSessionListResponse([
+                {
+                  key: sessionKey,
+                  kind: "direct",
+                  label: `Progress ${variant.name}`,
+                  updatedAt: 1,
+                },
+              ]),
+            },
+            sessionKey,
+          });
+
+          await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
+          await expect.poll(() => gateway.getRequests("progressCard.get")).toHaveLength(1);
+          const card = page.locator('[data-progress-card-placement="composer"]');
+          const body = card.locator(".session-progress-card__body");
+          await expect.poll(() => card.isVisible()).toBe(true);
+          await expect.poll(() => card.getAttribute("open")).toBe("");
+
+          const bodyLayout = await body.evaluate((node) => ({
+            clientHeight: node.clientHeight,
+            overflowY: getComputedStyle(node).overflowY,
+            scrollHeight: node.scrollHeight,
+          }));
+          expect(bodyLayout.overflowY).toBe("auto");
+          expect(bodyLayout.scrollHeight).toBeGreaterThan(bodyLayout.clientHeight);
+
+          if (captureUiProofEnabled && variant.name === "markdown-only") {
+            const parentStyle = await page.addStyleTag({
+              content: `.session-progress-card--composer .session-progress-card__body {
+                overflow: hidden !important;
+                overscroll-behavior: auto !important;
+                scrollbar-width: auto !important;
+              }`,
+            });
+            expect(await body.evaluate((node) => getComputedStyle(node).overflowY)).toBe("hidden");
+            await captureProof(page, "tall-markdown-before-clipped.png");
+            await parentStyle.evaluate((node) => node.parentNode?.removeChild(node));
+          }
+
+          const lastMarkdownRow = card.locator("tbody tr:last-child");
+          await lastMarkdownRow.scrollIntoViewIfNeeded();
+          const markdownVisible = await lastMarkdownRow.evaluate((node) => {
+            const row = node.getBoundingClientRect();
+            const viewport = node
+              .closest<HTMLElement>(".session-progress-card__body")!
+              .getBoundingClientRect();
+            return row.bottom <= viewport.bottom + 1 && row.top >= viewport.top - 1;
+          });
+          expect(markdownVisible).toBe(true);
+          expect(await body.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+          expect(await page.evaluate(() => window.scrollY)).toBe(0);
+          await captureProof(page, `tall-${variant.name}-after-scrolled.png`);
+
+          if (variant.steps) {
+            const lastStep = card.locator(".session-progress-card__step:last-child");
+            await lastStep.scrollIntoViewIfNeeded();
+            await expect.poll(() => lastStep.isVisible()).toBe(true);
+          }
+        },
+      );
+    }
+  });
+
   it("presents completed disclosure states and dismisses the card across reload", async () => {
     const sessionKey = "agent:main:progress-complete";
     const plan = [
