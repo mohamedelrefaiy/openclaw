@@ -367,10 +367,35 @@ suite.define(() => {
       const pickerWidth = () =>
         microphonePicker.evaluate((node) => node.getBoundingClientRect().width);
       await expect.poll(pickerWidth).toBe(0);
+      await page.emulateMedia({ reducedMotion: "no-preference" });
       await voice.hover();
-      await expect.poll(pickerWidth).toBeGreaterThanOrEqual(12);
-      const voiceBeforeHold = await voice.boundingBox();
+      await expect
+        .poll(() =>
+          microphonePickerShell.evaluate((node) => getComputedStyle(node).transitionDelay),
+        )
+        .toBe("0.5s");
+      await expect
+        .poll(() => microphonePicker.evaluate((node) => getComputedStyle(node).transitionDelay))
+        .toBe("0.5s, 0.5s, 0.57s, 0s, 0s");
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      expect(await pickerWidth()).toBe(0);
+      await expect.poll(pickerWidth).toBeGreaterThanOrEqual(27.5);
+      const [voiceBeforeHold, pickerBeforeHold] = await Promise.all([
+        voice.boundingBox(),
+        microphonePicker.boundingBox(),
+      ]);
       expect(voiceBeforeHold).not.toBeNull();
+      expect(pickerBeforeHold).not.toBeNull();
+      expect(
+        Math.abs(
+          (voiceBeforeHold?.x ?? 0) - ((pickerBeforeHold?.x ?? 0) + (pickerBeforeHold?.width ?? 0)),
+        ),
+      ).toBeLessThanOrEqual(0.5);
       await page.mouse.down();
       await expect
         .poll(() =>
